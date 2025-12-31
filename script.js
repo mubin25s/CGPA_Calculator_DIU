@@ -1,6 +1,4 @@
-// Constants
-const TARGET_PASS = 40;
-const TARGET_A_PLUS = 80;
+// Constants removed - now loaded from config.json (appConfig)
 
 // Element Selection
 const inputs = {
@@ -111,7 +109,29 @@ function selectQuality(type, quality) {
     calculateTotal();
 }
 
+// Global Config Variable
+let appConfig = null;
+
+// Function to fetch configuration
+async function loadConfig() {
+    try {
+        const response = await fetch('config.json');
+        appConfig = await response.json();
+        calculateTotal(); // Run initial calculation once config is loaded
+    } catch (error) {
+        console.error('Failed to load config:', error);
+        // Fallback or alert user
+        showWarning("Failed to load configuration!");
+    }
+}
+
+// Ensure calculateTotal uses the config
 function calculateTotal() {
+    if (!appConfig) return; // Wait for config
+
+    const TARGET_PASS = appConfig.thresholds.pass;
+    const TARGET_A_PLUS = appConfig.thresholds.a_plus;
+
     // 1. Calculate Quiz Average
     const q1 = parseFloat(inputs.quiz1.value) || 0;
     const q2 = parseFloat(inputs.quiz2.value) || 0;
@@ -122,9 +142,9 @@ function calculateTotal() {
     displays.quizAvg.innerText = `Avg: ${quizAvg.toFixed(2)}`;
 
     // 2. Attendance Calculation
-    // 7 Marks total. Input is percentage.
     const attPercent = parseFloat(inputs.attendance.value) || 0;
-    const attScore = (attPercent / 100) * 7;
+    const attMax = appConfig.sections.attendance.max;
+    const attScore = (attPercent / 100) * attMax;
     displays.attendance.innerText = `Points: ${attScore.toFixed(2)}`;
 
     // 3. Get Other Scores
@@ -134,91 +154,43 @@ function calculateTotal() {
     const finalScore = parseFloat(inputs.final.value) || 0;
 
     // 4. Total Sum
-    // Note: Quiz Avg is "Average Quiz Number" which implies the avg is the score out of 15.
     const totalCurrent = quizAvg + presScore + assignScore + midScore + attScore + finalScore;
-    
-    // Update Total Display
     displays.total.innerText = totalCurrent.toFixed(2);
 
-    // 5. Calculate Needed / Status
-    // If Final is NOT entered (or 0), show what is needed.
-    // If Pre-final total > 40, they passed already.
-    
-    // Calculate total excluding final for "Needed" calculation
-    const currentPreFinal = totalCurrent - finalScore;
-    const remainingForPass = TARGET_PASS - currentPreFinal;
-    const remainingForAPlus = TARGET_A_PLUS - currentPreFinal;
-
-    // Determine Specific Letter Grade (UGC Uniform Grading System)
+    // 5. Letter Grade Determination (Using Config)
     let grade = "F";
-    let gradeColor = "#ef4444"; // Red
+    let gradeColor = appConfig.gradingScale.find(g => g.name === "F").color;
 
-    if (totalCurrent >= 80) {
-        grade = "A+ (Outstanding)";
-        gradeColor = "#10b981"; // Emerald
-    } else if (totalCurrent >= 75) {
-        grade = "A (Excellent)";
-        gradeColor = "#34d399";
-    } else if (totalCurrent >= 70) {
-        grade = "A- (Very Good)";
-        gradeColor = "#6ee7b7";
-    } else if (totalCurrent >= 65) {
-        grade = "B+ (Good)";
-        gradeColor = "#f59e0b"; // Amber
-    } else if (totalCurrent >= 60) {
-        grade = "B (Satisfactory)";
-        gradeColor = "#fbbf24";
-    } else if (totalCurrent >= 55) {
-        grade = "B- (Above Average)";
-        gradeColor = "#fcd34d";
-    } else if (totalCurrent >= 50) {
-        grade = "C+ (Average)";
-        gradeColor = "#d97706";
-    } else if (totalCurrent >= 45) {
-        grade = "C (Below Average)";
-        gradeColor = "#b45309";
-    } else if (totalCurrent >= 40) {
-        grade = "D (Pass)";
-        gradeColor = "#78350f";
-    } else {
-        grade = "F (Fail)";
-        gradeColor = "#ef4444";
+    // Iterate through grading scale (Assume sorted descending in JSON or sort here)
+    // JSON is sorted A+ to F. Find the first one that matches totalCurrent >= min
+    const achievedGrade = appConfig.gradingScale.find(g => totalCurrent >= g.min);
+    if (achievedGrade) {
+        grade = `${achievedGrade.name} (${achievedGrade.remarks})`;
+        gradeColor = achievedGrade.color;
     }
 
     displays.status.innerText = grade;
     displays.status.style.color = gradeColor;
 
-    // 5. Calculate Grade Targets & Populate Table
-    // (currentPreFinal is already calculated above)
+    // 6. Calculate Grade Targets & Populate Table
     const tableBody = document.getElementById('grade-targets-body');
-    tableBody.innerHTML = ''; // Clear existing
-
-    // Check if Final Exam is entered
+    tableBody.innerHTML = ''; 
+    const currentPreFinal = totalCurrent - finalScore;
     const isFinalEntered = inputs.final.value !== '';
 
-    // UGC Grade Thresholds
-    const grades = [
-        { name: 'A+', min: 80, color: '#10b981' },
-        { name: 'A',  min: 75, color: '#34d399' },
-        { name: 'A-', min: 70, color: '#6ee7b7' },
-        { name: 'B+', min: 65, color: '#f59e0b' },
-        { name: 'B',  min: 60, color: '#fbbf24' },
-        { name: 'B-', min: 55, color: '#fcd34d' },
-        { name: 'C+', min: 50, color: '#d97706' },
-        { name: 'C',  min: 45, color: '#b45309' },
-        { name: 'D',  min: 40, color: '#78350f' }
-    ];
+    // Filter out 'F' from targets usually, or keep all. Let's keep all except F to match previous behavior
+    const targetGrades = appConfig.gradingScale.filter(g => g.min >= TARGET_PASS); 
 
     let nextTarget = null;
 
-    grades.forEach(grade => {
+    targetGrades.forEach(gradeItem => {
         const row = document.createElement('tr');
         let needText = '';
         let statusClass = '';
 
         if (isFinalEntered) {
-            // RESULT MODE: Show if achieved or missed based on Total (including final)
-            if (totalCurrent >= grade.min) {
+            // RESULT MODE
+            if (totalCurrent >= gradeItem.min) {
                 needText = '<i class="fa-solid fa-check"></i> Achieved';
                 statusClass = 'status-achieved';
             } else {
@@ -226,30 +198,31 @@ function calculateTotal() {
                 statusClass = 'status-impossible';
             }
         } else {
-            // PREDICTION MODE: Show what is needed in Final
-            const needed = grade.min - currentPreFinal;
+            // PREDICTION MODE
+            const needed = gradeItem.min - currentPreFinal;
             const neededRounded = Math.ceil(needed);
+            const finalMax = appConfig.sections.final.max;
 
             if (needed <= 0) {
                 needText = '<i class="fa-solid fa-check"></i> Achieved';
                 statusClass = 'status-achieved';
-            } else if (needed > 40) {
-                needText = 'Impossible (>40)';
+            } else if (needed > finalMax) {
+                needText = `Impossible (>${finalMax})`;
                 statusClass = 'status-impossible';
             } else {
                 needText = `${neededRounded} Marks`;
                 statusClass = 'status-possible';
                 
-                // Identify the next closest target
+                // Identify next target (smallest positive needed)
                 if (!nextTarget || (neededRounded < nextTarget.amount && neededRounded > 0)) {
-                    nextTarget = { name: grade.name, amount: neededRounded };
+                    nextTarget = { name: gradeItem.name, amount: neededRounded };
                 }
             }
         }
 
         row.innerHTML = `
-            <td style="color: ${grade.color}; font-weight: 700;">${grade.name}</td>
-            <td>${grade.min}%</td>
+            <td style="color: ${gradeItem.color}; font-weight: 700;">${gradeItem.name}</td>
+            <td>${gradeItem.min}%</td>
             <td class="${statusClass}">${needText}</td>
         `;
         tableBody.appendChild(row);
@@ -257,26 +230,22 @@ function calculateTotal() {
 
     // Update Footer "Next Target"
     let importantText = "";
-    
     if (isFinalEntered) {
         importantText = "Final Results Locked";
     } else {
         if (nextTarget) {
             importantText = `Need ${nextTarget.amount} for ${nextTarget.name}`;
         } else {
-            // If no next target, check if we failed everything or passed everything
-            if (currentPreFinal >= 80) importantText = "Max Grade Achieved!";
-            else importantText = "Retake Required"; // If D is impossible
+            if (currentPreFinal >= TARGET_A_PLUS) importantText = "Max Grade Achieved!";
+            else importantText = "Retake Required";
         }
         
-        // Safety check for already passed but can't reach higher
-        if (!nextTarget && currentPreFinal >= 40 && currentPreFinal < 80) {
-            importantText = "Grade Locked"; // Can't reach next grade, but passed
+        if (!nextTarget && currentPreFinal >= TARGET_PASS && currentPreFinal < TARGET_A_PLUS) {
+            importantText = "Grade Locked"; // Passed but can't go higher
         }
     }
-
     displays.needed.innerText = importantText;
 }
 
 // Initial Run
-calculateTotal();
+loadConfig();
